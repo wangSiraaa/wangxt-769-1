@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:3099}"
 PASS=0
 FAIL=0
 
-ok()   { echo "✅ $1"; ((PASS++)); }
-fail() { echo "❌ $1"; ((FAIL++)); }
+ok()   { echo "✅ $1"; PASS=$((PASS + 1)); }
+fail() { echo "❌ $1"; FAIL=$((FAIL + 1)); }
 
 echo "========================================="
 echo "  生鲜门店临期折扣系统 — 冒烟测试"
@@ -21,6 +21,9 @@ for i in $(seq 1 30); do
   fi
   if [ "$i" -eq 30 ]; then
     fail "服务 30s 内未就绪"
+    echo "========================================="
+    echo "  冒烟测试结果: ✅ $PASS 通过  ❌ $FAIL 失败"
+    echo "========================================="
     exit 1
   fi
   sleep 1
@@ -56,12 +59,11 @@ if echo "$EXPIRED" | grep -q '"expired"'; then
 else
   fail "过期批次状态异常: $EXPIRED"
 fi
-
-EXPIRED_ID=$(echo "$EXPIRED" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
-echo "  过期批次 ID: $EXPIRED_ID"
+EXPIRED_ID=$(echo "$EXPIRED" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "")
+echo "  过期批次 ID: ${EXPIRED_ID:-N/A}"
 echo ""
 
-echo "--- 3. 对过期批次创建折扣 → 应被拒绝 ---"
+echo "--- 3. 对过期批次创建折扣 → 应被拒绝 (EXPIRED_BATCH) ---"
 DISC_EXPIRED=$(curl -s -X POST "$BASE_URL/api/discounts" \
   -H 'Content-Type: application/json' \
   -d "{\"batch_id\":$EXPIRED_ID,\"discount_rate\":0.7}")
@@ -72,18 +74,7 @@ else
 fi
 echo ""
 
-echo "--- 4. 对过期批次发布折扣 → 应被拒绝 (二次防线) ---"
-PUB_EXPIRED=$(curl -s -X POST "$BASE_URL/api/discounts/9999/publish" \
-  -H 'Content-Type: application/json' \
-  -d '{"operator":"张店长"}')
-if echo "$PUB_EXPIRED" | grep -q '不存在'; then
-  ok "不存在的折扣ID被正确拒绝"
-else
-  fail "不存在的折扣ID返回异常: $PUB_EXPIRED"
-fi
-echo ""
-
-echo "--- 5. 提交一个临期商品批次 ---"
+echo "--- 4. 提交一个临期商品批次 ---"
 NEAR=$(curl -sf -X POST "$BASE_URL/api/batches" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -101,11 +92,11 @@ if echo "$NEAR" | grep -q '"active"'; then
 else
   fail "临期批次状态异常: $NEAR"
 fi
-NEAR_ID=$(echo "$NEAR" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
-echo "  临期批次 ID: $NEAR_ID"
+NEAR_ID=$(echo "$NEAR" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "")
+echo "  临期批次 ID: ${NEAR_ID:-N/A}"
 echo ""
 
-echo "--- 6. 创建折扣率过低的折扣 → 应被拒绝 (低于最低毛利) ---"
+echo "--- 5. 创建折扣率过低的折扣 → 应被拒绝 (BELOW_MIN_PROFIT) ---"
 DISC_LOW=$(curl -s -X POST "$BASE_URL/api/discounts" \
   -H 'Content-Type: application/json' \
   -d "{\"batch_id\":$NEAR_ID,\"discount_rate\":0.4}")
@@ -116,20 +107,21 @@ else
 fi
 echo ""
 
-echo "--- 7. 创建合法折扣 (7折) ---"
+echo "--- 6. 创建合法折扣 (7折) ---"
 DISC_OK=$(curl -sf -X POST "$BASE_URL/api/discounts" \
   -H 'Content-Type: application/json' \
   -d "{\"batch_id\":$NEAR_ID,\"discount_rate\":0.7}")
 if echo "$DISC_OK" | grep -q '"ok":true'; then
-  ok "7折折扣创建成功，折后价: ¥$(echo "$DISC_OK" | grep -o '"discounted_price":[0-9.]*' | head -1 | grep -o '[0-9.]*')"
+  DISCOUNTED_PRICE=$(echo "$DISC_OK" | grep -o '"discounted_price":[0-9.]*' | head -1 | grep -o '[0-9.]*')
+  ok "7折折扣创建成功，折后价: ¥$DISCOUNTED_PRICE"
 else
   fail "7折折扣创建失败: $DISC_OK"
 fi
-DISC_ID=$(echo "$DISC_OK" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
-echo "  折扣 ID: $DISC_ID"
+DISC_ID=$(echo "$DISC_OK" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "")
+echo "  折扣 ID: ${DISC_ID:-N/A}"
 echo ""
 
-echo "--- 8. 发布价签时不填操作人 → 应被拒绝 ---"
+echo "--- 7. 发布价签时不填操作人 → 应被拒绝 (OPERATOR_REQUIRED) ---"
 PUB_NO_OP=$(curl -s -X POST "$BASE_URL/api/discounts/$DISC_ID/publish" \
   -H 'Content-Type: application/json' \
   -d '{}')
@@ -140,25 +132,41 @@ else
 fi
 echo ""
 
-echo "--- 9. 正式发布价签 (带操作人) ---"
+echo "--- 8. 正式发布价签 (带操作人) ---"
 PUB_OK=$(curl -sf -X POST "$BASE_URL/api/discounts/$DISC_ID/publish" \
   -H 'Content-Type: application/json' \
   -d '{"operator":"张店长"}')
 if echo "$PUB_OK" | grep -q '"ok":true'; then
-  TAG_CODE=$(echo "$PUB_OK" | grep -o '"tag_code":"[^"]*"' | head -1 | grep -o '"TAG-[^"]*"' | tr -d '"')
-  ok "价签发布成功，编码: $TAG_CODE，操作人: 张店长"
+  TAG_CODE=$(echo "$PUB_OK" | grep -o '"tag_code":"[^"]*"' | head -1 | sed 's/.*"tag_code":"\([^"]*\)".*/\1/' || echo "")
+  PUB_OPERATOR=$(echo "$PUB_OK" | grep -o '"operator":"[^"]*"' | head -1 | sed 's/.*"operator":"\([^"]*\)".*/\1/' || echo "")
+  ok "价签发布成功，编码: ${TAG_CODE:-N/A}，操作人: ${PUB_OPERATOR:-N/A}"
 else
   fail "价签发布失败: $PUB_OK"
+  TAG_CODE=""
+  PUB_OPERATOR=""
 fi
 echo ""
 
-echo "--- 10. 查询价签记录 ---"
+echo "--- 9. 回读价签记录，验证操作人与编码 ---"
 TAGS=$(curl -sf "$BASE_URL/api/tags")
 TAG_COUNT=$(echo "$TAGS" | grep -o '"id"' | wc -l | tr -d ' ')
-if [ "$TAG_COUNT" -ge 1 ]; then
-  ok "价签记录查询成功，共 $TAG_COUNT 条"
+TAG_FOUND_OP=$(echo "$TAGS" | grep -q '"operator":"张店长"' && echo "yes" || echo "no")
+TAG_FOUND_CODE=$(echo "$TAGS" | grep -q "\"tag_code\":\"${TAG_CODE:-}\"" && echo "yes" || echo "no")
+if [ "$TAG_COUNT" -ge 1 ] && [ "$TAG_FOUND_OP" = "yes" ] && [ "$TAG_FOUND_CODE" = "yes" ]; then
+  ok "价签记录回读成功：共 $TAG_COUNT 条，包含操作人「张店长」和价签编码 ${TAG_CODE:-N/A}"
 else
-  fail "价签记录为空"
+  fail "价签记录回读异常：count=$TAG_COUNT, found_op=$TAG_FOUND_OP, found_code=$TAG_FOUND_CODE, data=$TAGS"
+fi
+echo ""
+
+echo "--- 10. 对已发布折扣重复发布 → 应被拒绝 (INVALID_STATUS) ---"
+PUB_DUP=$(curl -s -X POST "$BASE_URL/api/discounts/$DISC_ID/publish" \
+  -H 'Content-Type: application/json' \
+  -d '{"operator":"李副店"}')
+if echo "$PUB_DUP" | grep -q 'INVALID_STATUS'; then
+  ok "重复发布被正确拒绝 (reason: INVALID_STATUS)"
+else
+  fail "重复发布未被拒绝: $PUB_DUP"
 fi
 echo ""
 
