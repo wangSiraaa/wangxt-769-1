@@ -25,8 +25,14 @@ export const discountApi = {
   list: () => api('/api/discounts'),
   create: (batch_id, discount_rate) =>
     api('/api/discounts', { method: 'POST', body: { batch_id, discount_rate } }),
+  audit: (id, conclusion, comment, audited_by) =>
+    api(`/api/discounts/${id}/audit`, { method: 'POST', body: { conclusion, comment, audited_by } }),
   publish: (id, operator) =>
     api(`/api/discounts/${id}/publish`, { method: 'POST', body: { operator } }),
+  withdraw: (id, reason, withdrawn_by) =>
+    api(`/api/discounts/${id}/withdraw`, { method: 'POST', body: { reason, withdrawn_by } }),
+  resubmit: (id) =>
+    api(`/api/discounts/${id}/resubmit`, { method: 'POST' }),
   revoke: (id) => api(`/api/discounts/${id}/revoke`, { method: 'POST' }),
 };
 

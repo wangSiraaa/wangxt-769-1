@@ -9,10 +9,17 @@ const STATUS_MAP = {
 };
 
 const DISCOUNT_STATUS_MAP = {
-  draft: { label: '草稿', color: '#1890ff' },
+  pending_audit: { label: '待审核', color: '#faad14' },
+  draft: { label: '草稿(已通过)', color: '#1890ff' },
   published: { label: '已发布', color: '#52c41a' },
   rejected: { label: '已拒绝', color: '#ff4d4f' },
   revoked: { label: '已撤销', color: '#999' },
+  withdrawn: { label: '已撤回', color: '#fa8c16' },
+};
+
+const AUDIT_CONCLUSION_MAP = {
+  approved: { label: '审核通过', color: '#52c41a' },
+  rejected: { label: '审核拒绝', color: '#ff4d4f' },
 };
 
 function Badge({ label, color }) {
@@ -33,7 +40,27 @@ function Alert({ type, msg, detail }) {
   return (
     <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 6, padding: '10px 16px', margin: '8px 0' }}>
       <div style={{ color, fontWeight: 600, fontSize: 14 }}>{msg}</div>
-      {detail && <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>{JSON.stringify(detail)}</div>}
+      {detail && <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>{typeof detail === 'object' ? JSON.stringify(detail) : detail}</div>}
+    </div>
+  );
+}
+
+function Modal({ title, children, onClose, onConfirm, confirmText = '确认', showConfirm = true }) {
+  return (
+    <div style={styles.modalOverlay}>
+      <div style={styles.modal}>
+        <div style={styles.modalHeader}>
+          <h3 style={{ margin: 0 }}>{title}</h3>
+          <button onClick={onClose} style={styles.modalClose}>×</button>
+        </div>
+        <div style={styles.modalBody}>{children}</div>
+        {showConfirm && (
+          <div style={styles.modalFooter}>
+            <button onClick={onClose} style={styles.btnSm}>取消</button>
+            <button onClick={onConfirm} style={{ ...styles.btnSm, background: '#1890ff', color: '#fff', border: 'none' }}>{confirmText}</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -126,7 +153,7 @@ export default function App() {
 function BatchPanel({ batches, pushAlert, loadData, user }) {
   const [form, setForm] = useState({
     product_name: '', sku: '', cost_price: '', retail_price: '',
-    production_date: '', shelf_life_days: '', min_profit_rate: '5',
+    production_date: '', shelf_life_days: '', shelf_life_note: '', min_profit_rate: '5',
   });
 
   const submit = async () => {
@@ -141,7 +168,7 @@ function BatchPanel({ batches, pushAlert, loadData, user }) {
     const res = await batchApi.create(body);
     if (res.ok) {
       pushAlert({ type: res.warning ? 'warn' : 'success', msg: res.warning || '批次创建成功' });
-      setForm({ product_name: '', sku: '', cost_price: '', retail_price: '', production_date: '', shelf_life_days: '', min_profit_rate: '5' });
+      setForm({ product_name: '', sku: '', cost_price: '', retail_price: '', production_date: '', shelf_life_days: '', shelf_life_note: '', min_profit_rate: '5' });
       loadData();
     } else {
       pushAlert({ type: 'error', msg: res.msg });
@@ -159,6 +186,7 @@ function BatchPanel({ batches, pushAlert, loadData, user }) {
         <input placeholder="生产日期" type="date" value={form.production_date} onChange={e => setForm({ ...form, production_date: e.target.value })} style={styles.input} />
         <input placeholder="保质期(天)" type="number" value={form.shelf_life_days} onChange={e => setForm({ ...form, shelf_life_days: e.target.value })} style={styles.input} />
         <input placeholder="最低毛利率(%)" type="number" step="0.1" value={form.min_profit_rate} onChange={e => setForm({ ...form, min_profit_rate: e.target.value })} style={styles.input} />
+        <input placeholder="保质期说明" value={form.shelf_life_note} onChange={e => setForm({ ...form, shelf_life_note: e.target.value })} style={styles.input} />
         <button onClick={submit} style={styles.btnPrimary}>提交批次</button>
       </div>
 
@@ -167,7 +195,7 @@ function BatchPanel({ batches, pushAlert, loadData, user }) {
         <thead>
           <tr>
             <th>ID</th><th>商品</th><th>SKU</th><th>成本</th><th>零售价</th>
-            <th>生产日期</th><th>保质期</th><th>到期日</th><th>最低毛利</th><th>状态</th>
+            <th>生产日期</th><th>保质期</th><th>到期日</th><th>保质期说明</th><th>最低毛利</th><th>状态</th>
           </tr>
         </thead>
         <tbody>
@@ -176,6 +204,9 @@ function BatchPanel({ batches, pushAlert, loadData, user }) {
               <td>{b.id}</td><td>{b.product_name}</td><td>{b.sku}</td>
               <td>¥{b.cost_price.toFixed(2)}</td><td>¥{b.retail_price.toFixed(2)}</td>
               <td>{b.production_date}</td><td>{b.shelf_life_days}天</td><td>{b.expiry_date}</td>
+              <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.shelf_life_note}>
+                {b.shelf_life_note || '-'}
+              </td>
               <td>{(b.min_profit_rate * 100).toFixed(1)}%</td>
               <td><Badge {...STATUS_MAP[b.status]} /></td>
             </tr>
@@ -191,11 +222,15 @@ function DiscountPanel({ discounts, batches, pushAlert, loadData, user }) {
   const [rate, setRate] = useState('');
   const [pubId, setPubId] = useState('');
   const [operator, setOperator] = useState('');
+  const [auditModal, setAuditModal] = useState(null);
+  const [withdrawModal, setWithdrawModal] = useState(null);
+  const [auditComment, setAuditComment] = useState('');
+  const [withdrawReason, setWithdrawReason] = useState('');
 
   const createDiscount = async () => {
     const res = await discountApi.create(parseInt(selBatch, 10), parseFloat(rate) / 100);
     if (res.ok) {
-      pushAlert({ type: 'success', msg: `折扣创建成功，折后价 ¥${res.data.discounted_price}，毛利率 ${(res.data.gross_profit_rate * 100).toFixed(2)}%` });
+      pushAlert({ type: 'success', msg: `折扣创建成功，已提交审核，折后价 ¥${res.data.discounted_price}，毛利率 ${(res.data.gross_profit_rate * 100).toFixed(2)}%` });
       setSelBatch(''); setRate('');
       loadData();
     } else {
@@ -208,6 +243,48 @@ function DiscountPanel({ discounts, batches, pushAlert, loadData, user }) {
     if (res.ok) {
       pushAlert({ type: 'success', msg: `价签发布成功！编码: ${res.data.tag_code}，操作人: ${res.data.operator}` });
       setPubId(''); setOperator('');
+      loadData();
+    } else {
+      pushAlert({ type: 'error', msg: res.msg, detail: res.detail });
+    }
+  };
+
+  const openAudit = (d, conclusion) => {
+    setAuditModal({ discount: d, conclusion });
+    setAuditComment('');
+  };
+
+  const confirmAudit = async () => {
+    const res = await discountApi.audit(auditModal.discount.id, auditModal.conclusion, auditComment, user.id);
+    if (res.ok) {
+      pushAlert({ type: 'success', msg: `审核${auditModal.conclusion === 'approved' ? '通过' : '拒绝'}成功` });
+      setAuditModal(null);
+      loadData();
+    } else {
+      pushAlert({ type: 'error', msg: res.msg, detail: res.detail });
+    }
+  };
+
+  const openWithdraw = (d) => {
+    setWithdrawModal(d);
+    setWithdrawReason('');
+  };
+
+  const confirmWithdraw = async () => {
+    const res = await discountApi.withdraw(withdrawModal.id, withdrawReason, user.id);
+    if (res.ok) {
+      pushAlert({ type: 'success', msg: '撤回成功' });
+      setWithdrawModal(null);
+      loadData();
+    } else {
+      pushAlert({ type: 'error', msg: res.msg });
+    }
+  };
+
+  const resubmit = async (id) => {
+    const res = await discountApi.resubmit(id);
+    if (res.ok) {
+      pushAlert({ type: 'success', msg: '重办成功，已重新提交审核' });
       loadData();
     } else {
       pushAlert({ type: 'error', msg: res.msg, detail: res.detail });
@@ -229,13 +306,13 @@ function DiscountPanel({ discounts, batches, pushAlert, loadData, user }) {
         <select value={selBatch} onChange={e => setSelBatch(e.target.value)} style={styles.input}>
           <option value="">选择批次</option>
           {activeBatches.map(b => (
-            <option key={b.id} value={b.id}>
-              {b.product_name}（到期:{b.expiry_date}）
+            <option key={b.id} value={b.id} disabled={b.status === 'expired'}>
+              {b.product_name}（到期:{b.expiry_date}）{b.status === 'expired' ? ' [已过期]' : ''}
             </option>
           ))}
         </select>
         <input placeholder="折扣率(% 如7折填70)" type="number" step="1" value={rate} onChange={e => setRate(e.target.value)} style={styles.input} />
-        <button onClick={createDiscount} style={styles.btnPrimary}>创建折扣</button>
+        <button onClick={createDiscount} style={styles.btnPrimary}>创建折扣（提交审核）</button>
       </div>
 
       <h3 style={{ marginTop: 24 }}>发布价签</h3>
@@ -257,26 +334,95 @@ function DiscountPanel({ discounts, batches, pushAlert, loadData, user }) {
         <thead>
           <tr>
             <th>ID</th><th>商品</th><th>原价</th><th>折扣率</th><th>折后价</th>
-            <th>毛利率</th><th>状态</th><th>操作人</th><th>操作</th>
+            <th>毛利率</th><th>状态</th><th>审核结论</th><th>保质期说明</th>
+            <th>操作人/审核人</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
           {discounts.map(d => (
             <tr key={d.id}>
-              <td>{d.id}</td><td>{d.product_name}</td><td>¥{d.retail_price?.toFixed(2)}</td>
-              <td>{Math.round(d.discount_rate * 100)}%</td><td>¥{d.discounted_price?.toFixed(2)}</td>
+              <td>{d.id}</td>
+              <td>{d.product_name}</td>
+              <td>¥{d.retail_price?.toFixed(2)}</td>
+              <td>{Math.round(d.discount_rate * 100)}%</td>
+              <td>¥{d.discounted_price?.toFixed(2)}</td>
               <td>{(d.gross_profit_rate * 100).toFixed(2)}%</td>
               <td><Badge {...DISCOUNT_STATUS_MAP[d.status]} /></td>
-              <td>{d.operator || '-'}</td>
               <td>
-                {d.status === 'published' && (
-                  <button onClick={() => revoke(d.id)} style={styles.btnSm}>撤销</button>
-                )}
+                {d.audit_conclusion ? (
+                  <div>
+                    <Badge {...AUDIT_CONCLUSION_MAP[d.audit_conclusion]} />
+                    {d.audit_comment && <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{d.audit_comment}</div>}
+                  </div>
+                ) : '-'}
+              </td>
+              <td style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.shelf_life_note}>
+                {d.shelf_life_note || '-'}
+              </td>
+              <td style={{ fontSize: 12 }}>
+                {d.operator && <div>发布: {d.operator}</div>}
+                {d.audited_by_name && <div>审核: {d.audited_by_name}</div>}
+                {d.withdrawn_by_name && <div>撤回: {d.withdrawn_by_name}</div>}
+              </td>
+              <td>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {d.status === 'pending_audit' && (
+                    <>
+                      <button onClick={() => openAudit(d, 'approved')} style={{ ...styles.btnSm, background: '#52c41a', color: '#fff', border: 'none' }}>审核通过</button>
+                      <button onClick={() => openAudit(d, 'rejected')} style={{ ...styles.btnSm, background: '#ff4d4f', color: '#fff', border: 'none' }}>拒绝</button>
+                    </>
+                  )}
+                  {['published', 'draft', 'rejected'].includes(d.status) && (
+                    <button onClick={() => openWithdraw(d)} style={styles.btnSm}>撤回</button>
+                  )}
+                  {(d.status === 'withdrawn' || d.status === 'rejected') && (
+                    <button onClick={() => resubmit(d.id)} style={{ ...styles.btnSm, background: '#1890ff', color: '#fff', border: 'none' }}>重办</button>
+                  )}
+                  {d.status === 'published' && (
+                    <button onClick={() => revoke(d.id)} style={styles.btnSm}>撤销发布</button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {auditModal && (
+        <Modal
+          title={`${auditModal.conclusion === 'approved' ? '审核通过' : '审核拒绝'} - #${auditModal.discount.id} ${auditModal.discount.product_name}`}
+          onClose={() => setAuditModal(null)}
+          onConfirm={confirmAudit}
+          confirmText="确认审核"
+        >
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 6, fontSize: 13, color: '#666' }}>折扣详情：{Math.round(auditModal.discount.discount_rate * 100)}%折，折后价 ¥{auditModal.discount.discounted_price?.toFixed(2)}</div>
+            <div style={{ marginBottom: 6, fontSize: 13, color: '#666' }}>到期日：{auditModal.discount.expiry_date}</div>
+          </div>
+          <textarea
+            placeholder={auditModal.conclusion === 'approved' ? '审核意见（可选）' : '拒绝原因'}
+            value={auditComment}
+            onChange={e => setAuditComment(e.target.value)}
+            style={{ ...styles.input, minHeight: 80, resize: 'vertical' }}
+          />
+        </Modal>
+      )}
+
+      {withdrawModal && (
+        <Modal
+          title={`撤回折扣 - #${withdrawModal.id} ${withdrawModal.product_name}`}
+          onClose={() => setWithdrawModal(null)}
+          onConfirm={confirmWithdraw}
+          confirmText="确认撤回"
+        >
+          <textarea
+            placeholder="撤回原因（可选）"
+            value={withdrawReason}
+            onChange={e => setWithdrawReason(e.target.value)}
+            style={{ ...styles.input, minHeight: 80, resize: 'vertical' }}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -311,11 +457,17 @@ const styles = {
   nav: { display: 'flex', gap: 0, padding: '0 24px', background: '#fff', borderBottom: '1px solid #e8e8e8' },
   navBtn: { padding: '12px 24px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 500, borderBottom: '2px solid transparent' },
   navBtnActive: { borderBottom: '2px solid #1890ff', color: '#1890ff' },
-  main: { padding: 24, maxWidth: 1200, margin: '0 auto' },
+  main: { padding: 24, maxWidth: 1400, margin: '0 auto' },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 16 },
   input: { width: '100%', padding: '8px 12px', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 14, boxSizing: 'border-box' },
   btnPrimary: { padding: '8px 20px', background: '#1890ff', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, fontWeight: 600, height: 38 },
   btnSm: { padding: '4px 12px', background: '#f5f5f5', border: '1px solid #d9d9d9', borderRadius: 4, cursor: 'pointer', fontSize: 12 },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
   alertArea: { position: 'fixed', top: 16, right: 16, zIndex: 1000, width: 400 },
+  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1001, display: 'flex', justifyContent: 'center', alignItems: 'center' },
+  modal: { background: '#fff', borderRadius: 8, minWidth: 400, maxWidth: 500, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
+  modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #e8e8e8' },
+  modalClose: { border: 'none', background: 'none', fontSize: 20, cursor: 'pointer', color: '#999' },
+  modalBody: { padding: 16 },
+  modalFooter: { display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 16px', borderTop: '1px solid #e8e8e8' },
 };

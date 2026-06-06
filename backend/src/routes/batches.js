@@ -15,7 +15,7 @@ router.get("/", (req, res) => {
 router.post("/", (req, res) => {
   const {
     product_name, sku, cost_price, retail_price,
-    production_date, shelf_life_days, min_profit_rate, created_by,
+    production_date, shelf_life_days, shelf_life_note, min_profit_rate, created_by,
   } = req.body;
 
   if (!product_name || !sku || !cost_price || !retail_price || !production_date || !shelf_life_days) {
@@ -32,9 +32,9 @@ router.post("/", (req, res) => {
 
   const info = db.run(
     `INSERT INTO product_batches
-      (product_name, sku, cost_price, retail_price, production_date, shelf_life_days, expiry_date, min_profit_rate, status, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [product_name, sku, cost_price, retail_price, production_date, shelf_life_days, expiryStr, profit,
+      (product_name, sku, cost_price, retail_price, production_date, shelf_life_days, expiry_date, shelf_life_note, min_profit_rate, status, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [product_name, sku, cost_price, retail_price, production_date, shelf_life_days, expiryStr, shelf_life_note || null, profit,
      isExpired ? "expired" : "active", created_by || 1]
   );
 

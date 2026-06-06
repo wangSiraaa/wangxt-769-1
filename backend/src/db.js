@@ -26,6 +26,7 @@ const SCHEMA = `
     production_date   TEXT    NOT NULL,
     shelf_life_days   INTEGER NOT NULL CHECK(shelf_life_days > 0),
     expiry_date       TEXT    NOT NULL,
+    shelf_life_note   TEXT,
     min_profit_rate   REAL    NOT NULL DEFAULT 0.05,
     status            TEXT    NOT NULL DEFAULT 'active',
     created_by        INTEGER NOT NULL,
@@ -34,17 +35,26 @@ const SCHEMA = `
   );
 
   CREATE TABLE IF NOT EXISTS discount_rules (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_id        INTEGER NOT NULL,
-    discount_rate   REAL    NOT NULL,
-    discounted_price REAL   NOT NULL,
-    gross_profit_rate REAL  NOT NULL,
-    status          TEXT    NOT NULL DEFAULT 'draft',
-    reject_reason   TEXT,
-    operator        TEXT,
-    published_at    TEXT,
-    created_at      TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (batch_id) REFERENCES product_batches(id)
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id          INTEGER NOT NULL,
+    discount_rate     REAL    NOT NULL,
+    discounted_price  REAL    NOT NULL,
+    gross_profit_rate REAL    NOT NULL,
+    status            TEXT    NOT NULL DEFAULT 'draft',
+    reject_reason     TEXT,
+    audit_conclusion  TEXT,
+    audit_comment     TEXT,
+    audited_by        INTEGER,
+    audited_at        TEXT,
+    withdraw_reason   TEXT,
+    withdrawn_by      INTEGER,
+    withdrawn_at      TEXT,
+    operator          TEXT,
+    published_at      TEXT,
+    created_at        TEXT    DEFAULT (datetime('now')),
+    FOREIGN KEY (batch_id) REFERENCES product_batches(id),
+    FOREIGN KEY (audited_by) REFERENCES users(id),
+    FOREIGN KEY (withdrawn_by) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS price_tags (
